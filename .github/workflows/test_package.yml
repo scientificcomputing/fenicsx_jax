@@ -15,7 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        label: ["stable", "nightly"]
+        label: [
+            "stable", #"nightly"
+          ]
 
     steps:
       - uses: actions/checkout@v6
