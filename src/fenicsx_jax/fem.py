@@ -2,7 +2,7 @@
 # SPDX-License-Identifier:    LGPL-3.0-or-later
 
 import basix
-import dolfinx
+import dolfinx.fem.petsc
 import dolfinx_external_operator.fem
 import numpy as np
 from dolfinx_external_operator import (
@@ -76,20 +76,20 @@ def compile_external_operator_form(
         form_compiler_options=form_compiler_options,
         entity_maps=entity_maps,
     )
-    compiled_form._ex_ops = ex_ops
+    compiled_form._ex_ops = ex_ops  # type: ignore[attr-defined]
     return compiled_form
 
 
 def pack_external_operator_data(form: dolfinx.fem.Form | list[dolfinx.fem.Form]):
     if isinstance(form, dolfinx.fem.Form):
-        external_operators = form._ex_ops
+        external_operators = form._ex_ops  # type: ignore[attr-defined]
         if len(external_operators) == 0:
             return
         operands = evaluate_operands(external_operators)
         evaluate_external_operators(external_operators, operands)
     else:
         for f in form:
-            external_operators = f._ex_ops
+            external_operators = f._ex_ops  # type: ignore[attr-defined]
             if len(external_operators) == 0:
                 continue
             operands = evaluate_operands(external_operators)
