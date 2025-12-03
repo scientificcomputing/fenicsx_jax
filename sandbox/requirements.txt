@@ -1,0 +1,5 @@
+jax[cpu]
+equinox
+optax
+sympy
+scifem
