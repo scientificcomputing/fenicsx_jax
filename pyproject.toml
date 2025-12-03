@@ -21,9 +21,9 @@ dependencies = [
 
 
 [project.optional-dependencies]
-test = ["pytest", "sympy", "jax"]
+test = ["pytest", "sympy", "jax", "scifem"]
 dev = ["pdbpp", "ipython", "mypy", "ruff"]
-docs = ["jupyter-book", "jupytext", "sphinx-codeautolink", "scifem"]
+docs = ["jupyter-book", "jupytext", "sphinx-codeautolink"]
 jupyter = ["trame_jupyter_extension", "trame", "pyvista[all]>=0.45.0"]
 all = [
     "fenicsx_jax[test]",
