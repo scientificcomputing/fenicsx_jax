@@ -19,7 +19,7 @@ jobs:
   check-code:
     runs-on: ubuntu-latest
 
-    container: ghcr.io/fenics/dolfinx/dolfinx:nightly
+    container: ghcr.io/fenics/dolfinx/dolfinx:stable
     steps:
       # This action sets the current path to the root of your github repo
       - uses: actions/checkout@v6
