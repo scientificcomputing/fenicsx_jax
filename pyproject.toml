@@ -1,0 +1,85 @@
+[build-system] # Require setuptool version due to https://github.com/pypa/setuptools/issues/2938
+requires = [
+    "setuptools>=77.0.3", # Ensuring license field is correctly parsed]
+    "wheel",
+]
+
+[project]
+name = "fenicsx_jax"
+version = "0.1.0.dev0"
+description = "Optimization using FEniCSx coupled with JAX"
+authors = [
+    { name = "Jørgen S. Dokken", email = "dokken@simula.no" },
+    { name = "Matteo Croci", email = "mcroci@bcamath.org" },
+]
+license = "LGPL-3.0-or-later"
+readme = "README.md"
+dependencies = [
+    "fenics-dolfinx>=0.10.0,<0.11.0",
+    "dolfinx_external_operator@git+https://github.com/a-latyshev/dolfinx-external-operator",
+]
+
+
+[project.optional-dependencies]
+test = ["pytest", "sympy"]
+dev = ["pdbpp", "ipython", "mypy", "ruff"]
+docs = ["jupyter-book", "jupytext", "sphinx-codeautolink", "scifem"]
+jupyter = ["trame_jupyter_extension", "trame", "pyvista[all]>=0.45.0"]
+all = [
+    "fenicsx_jax[test]",
+    "fenicsx_jax[dev]",
+    "fenicsx_jax[docs]",
+    "fenicsx_jax[jupyter]",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+testpaths = ["tests"]
+
+[tool.mypy]
+ignore_missing_imports = true
+# Folders to exclude
+exclude = ["docs/", "build/"]
+# Folder to check with mypy
+files = ["src", "tests"]
+
+[tool.ruff]
+src = ["src", "docs", "tests", "examples"]
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    # Pyflakes
+    "F",
+    # Pycodestyle
+    "E",
+    "W",
+    # isort
+    "I001",
+]
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["fenicsx_jaxs"]
+known-third-party = [
+    "basix",
+    "dolfinx",
+    "ffcx",
+    "ufl",
+    "gmsh",
+    "numpy",
+    "pytest",
+    "pyadjoint",
+    "dolfinx_external_operator",
+]
+section-order = [
+    "future",
+    "standard-library",
+    "mpi",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.isort.sections]
+"mpi" = ["mpi4py", "petsc4py"]
