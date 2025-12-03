@@ -1,0 +1,34 @@
+name: Test package
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test-code:
+    name: Test on ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    container: ghcr.io/fenics/dolfinx/dolfinx:${{ matrix.label }}
+    env:
+      DEB_PYTHON_INSTALL_LAYOUT: deb_system
+    strategy:
+      fail-fast: false
+      matrix:
+        label: ["stable", "nightly"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Update pip
+        run: python3 -m pip install --upgrade pip
+
+      - name: Install package
+        run: |
+          python3 -m pip install .[test] --no-build-isolation --check-build-dependencies
+
+      - name: Run tests
+        run: python3 -m pytest -v
+
+      - name: Run tests in parallel
+        run: mpiexec -n 4 python3 -m pytest -v
