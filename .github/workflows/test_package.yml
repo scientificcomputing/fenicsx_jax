@@ -25,6 +25,9 @@ jobs:
       - name: Update pip
         run: python3 -m pip install --upgrade pip
 
+      - name: Install scifem build deps
+        run: python3 -m pip install packaging scikit-build-core[pyproject] nanobind setuptools packaging pkgconfig
+
       - name: Install package
         run: |
           python3 -m pip install .[test] --no-build-isolation --check-build-dependencies
