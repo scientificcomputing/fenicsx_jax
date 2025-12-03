@@ -5,7 +5,6 @@ import basix
 import dolfinx
 import dolfinx_external_operator.fem
 import numpy as np
-import scifem
 from dolfinx_external_operator import (
     evaluate_external_operators,
     evaluate_operands,
@@ -16,8 +15,52 @@ __all__ = [
     "compile_external_operator_form",
     "pack_external_operator_data",
     "LinearProblem",
-    "create_real_functionspace",
 ]
+
+try:
+    import scifem
+
+    __all__.append("create_real_functionspace")
+
+    def create_real_functionspace(
+        mesh: dolfinx.mesh.Mesh, value_shape: tuple[int, ...] = ()
+    ) -> dolfinx.fem.FunctionSpace:
+        """Create a real function space.
+
+        Args:
+            mesh: The mesh the real space is defined on.
+            value_shape: The shape of the values in the real space.
+
+        Returns:
+            The real valued function space.
+        Note:
+            For scalar elements value shape is ``()``.
+
+        """
+
+        dtype = mesh.geometry.x.dtype
+        ufl_e = basix.ufl.element(
+            "P",
+            mesh.basix_cell(),
+            0,
+            dtype=dtype,
+            discontinuous=True,
+            shape=value_shape,
+        )
+
+        if (dtype := mesh.geometry.x.dtype) == np.float64:
+            cppV = scifem._scifem.create_real_functionspace_float64(
+                mesh._cpp_object, value_shape
+            )
+        elif dtype == np.float32:
+            cppV = scifem._scifem.create_real_functionspace_float32(
+                mesh._cpp_object, value_shape
+            )
+        else:
+            raise ValueError(f"Unsupported dtype: {dtype}")
+        return dolfinx_external_operator.fem.FunctionSpace(mesh, ufl_e, cppV)
+except ImportError:
+    pass
 
 
 def compile_external_operator_form(
@@ -81,37 +124,3 @@ class LinearProblem(dolfinx.fem.petsc.LinearProblem):
     def solve(self):
         pack_external_operator_data([self._a, self._L])
         return super().solve()
-
-
-def create_real_functionspace(
-    mesh: dolfinx.mesh.Mesh, value_shape: tuple[int, ...] = ()
-) -> dolfinx.fem.FunctionSpace:
-    """Create a real function space.
-
-    Args:
-        mesh: The mesh the real space is defined on.
-        value_shape: The shape of the values in the real space.
-
-    Returns:
-        The real valued function space.
-    Note:
-        For scalar elements value shape is ``()``.
-
-    """
-
-    dtype = mesh.geometry.x.dtype
-    ufl_e = basix.ufl.element(
-        "P", mesh.basix_cell(), 0, dtype=dtype, discontinuous=True, shape=value_shape
-    )
-
-    if (dtype := mesh.geometry.x.dtype) == np.float64:
-        cppV = scifem._scifem.create_real_functionspace_float64(
-            mesh._cpp_object, value_shape
-        )
-    elif dtype == np.float32:
-        cppV = scifem._scifem.create_real_functionspace_float32(
-            mesh._cpp_object, value_shape
-        )
-    else:
-        raise ValueError(f"Unsupported dtype: {dtype}")
-    return dolfinx_external_operator.fem.FunctionSpace(mesh, ufl_e, cppV)
