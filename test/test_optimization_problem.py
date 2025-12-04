@@ -240,6 +240,7 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
         pack_external_operator_data(compiled_dJdtheta)
         vec = dolfinx.fem.assemble_vector(compiled_dJdtheta)
         dolfinx.fem.assemble_vector(vec.array, compiled_dFdtheta)
+        vec.scatter_reverse(dolfinx.la.InsertMode.add)
         return vec.array.copy()
 
 
@@ -280,6 +281,7 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
         adjoint_problem_ref.solve()
         vec = dolfinx.fem.assemble_vector(dolfinx.fem.form(dJdtheta_ref))
         dolfinx.fem.assemble_vector(vec.array, dolfinx.fem.form(dFdtheta_ref))
+        vec.scatter_reverse(dolfinx.la.InsertMode.add)
         return vec.array.copy()
 
 
