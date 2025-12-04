@@ -19,4 +19,4 @@ Secondly, to use real-valued spaces, install `scifem`:
 - If you used conda, `conda install -c conda-forge scifem`
 - If you used spack, `spack install py-scifem`
 
-Finally install this package with `python3 -m pip install --no-build-isolation -e .[test]`
+Finally install this package with `python3 -m pip install --no-build-isolation -e .[test,examples]`

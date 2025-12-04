@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest", "sympy", "jax", "scifem"]
+examples = ["equinox", "optax", "sympy"]
 dev = ["pdbpp", "ipython", "mypy", "ruff"]
 docs = ["jupyter-book", "jupytext", "sphinx-codeautolink"]
 jupyter = ["trame_jupyter_extension", "trame", "pyvista[all]>=0.45.0"]
