@@ -123,10 +123,10 @@ class NeuralNetwork(eqx.Module):
 
 model = NeuralNetwork(key, N, D)
 
-# vals is a 1D jax.numpy.array containing all NN weights and biases
-# Can reconstruct the NN from the vals by using unravel_fun
-vals,unravel_fun = ravel_pytree(model)
-original_model = unravel_fun(vals)
+# theta_values is a 1D jax.numpy.array containing all NN weights and biases
+# Can reconstruct the NN from the theta_values by using unravel_fun
+theta_values,unravel_fun = ravel_pytree(model)
+original_model = unravel_fun(theta_values)
 
 dNN_dtheta_pytree = model.residual_dtheta_pytree(xtrain)
 dNN_dtheta = model.residual_dtheta(xtrain)
@@ -157,6 +157,13 @@ def u_NN_jax(gdim, derivatives):
     else:
         raise NotImplementedError(f"No function is defined for the {derivatives=}.")
 
+############################ Prepare JAX wrapper for the FEniCSx functional ###########################
+
+# NOTE: JAX does not support providing custom forward and backward diff rules at the same time so
+#       need to write two wrappers. The one that is compatible with jax.grad is J_jax_vjp.
+# NOTE: The only way to wrap functions into JAX so that autodiff is supported is to use jax.pure_callback
+#       which assumes that the functions are pure, i.e., that they have no side-effects. This is of course
+#       an assumption that does not hold here. The alternative is to do derivatives by hand.
 def jax_wrapper(J, dJdtheta):
 
     @jax.custom_jvp
@@ -191,6 +198,43 @@ def jax_wrapper(J, dJdtheta):
 
 ############################ pytest routine #####################################
 
+def test_jax_wrapper(theta_values, eval_J, eval_dJdtheta):
+
+    Jh = eval_J(theta_values)
+    vec_dJdn = eval_dJdtheta(theta_values)
+
+    J_jax_jvp,J_jax_vjp = jax_wrapper(eval_J, eval_dJdtheta)
+
+    # BWD diff test
+    g = lambda theta_values : jnp.sin(J_jax_vjp(theta_values))
+    gval = g(theta_values)
+
+    gjit = jax.jit(g)
+    gjitval = gjit(theta_values)
+
+    dgdtheta = jax.jit(jax.grad(g))
+    dgdthetaval = dgdtheta(theta_values)
+
+    ref_g = np.cos(Jh)*vec_dJdn
+
+    assert np.allclose(dgdthetaval, ref_g)
+    assert np.allclose(gjitval, np.sin(Jh))
+
+    # FWD diff test
+    h = lambda theta_values : jnp.sin(J_jax_jvp(theta_values))
+    hval = h(theta_values)
+
+    hjit = jax.jit(h)
+    hjitval = hjit(theta_values)
+
+    hjvp = jax.jit(lambda theta_values : jax.jvp(h, (theta_values,), (theta_values,))[1])
+    hjvp_val = hjvp(theta_values)
+
+    ref_h = np.dot(ref_g, theta_values)
+
+    assert np.allclose(hjvp_val, ref_h)
+    assert np.allclose(hjitval, np.sin(Jh))
+
 def test_neural_network(cell_type, q_deg, N):
     tdim = dolfinx.cpp.mesh.cell_dim(cell_type)
     assert tdim == gdim
@@ -205,10 +249,10 @@ def test_neural_network(cell_type, q_deg, N):
             MPI.COMM_WORLD, N, N, N, cell_type=cell_type
         )
 
-    ntheta = len(vals)
+    ntheta = len(theta_values)
     R = create_real_functionspace(mesh, value_shape=(ntheta,))
     theta = dolfinx.fem.Function(R)
-    theta.x.array[:] = vals
+    theta.x.array[:] = theta_values
     theta.x.scatter_forward()
     x = ufl.SpatialCoordinate(mesh)
 
@@ -264,6 +308,7 @@ def test_neural_network(cell_type, q_deg, N):
     J_compiled = compile_external_operator_form(J_ex_op)
     dJdn_compiled = compile_external_operator_form(dJdn_ex)
 
+    # Define J as a function of theta_values
     def eval_J(theta_values: np.ndarray) -> float:
         theta.x.array[:] = theta_values
         theta.x.scatter_forward()
@@ -272,6 +317,7 @@ def test_neural_network(cell_type, q_deg, N):
         Jh = mesh.comm.allreduce(Jh_loc, op=MPI.SUM)
         return Jh
 
+    # Define J as a function of theta_values
     def eval_dJdtheta(theta_values: np.ndarray) -> np.ndarray:
         theta.x.array[:] = theta_values
         theta.x.scatter_forward()
@@ -279,36 +325,10 @@ def test_neural_network(cell_type, q_deg, N):
         vec_dJdn = dolfinx.fem.assemble_vector(dJdn_compiled)
         return vec_dJdn.array.copy()
 
-    J_jax_jvp,J_jax_vjp = jax_wrapper(eval_J, eval_dJdtheta)
+    test_jax_wrapper(theta_values, eval_J, eval_dJdtheta)
 
-    g = lambda theta : jnp.sin(J_jax_vjp(theta))
-    gval = g(vals)
-
-    gjit = jax.jit(g)
-    gjitval = gjit(vals)
-
-    dgdtheta = jax.jit(jax.grad(g))
-    dgdthetaval = dgdtheta(vals)
-
-    h = lambda theta : jnp.sin(J_jax_jvp(theta))
-    hval = h(vals)
-
-    hjit = jax.jit(h)
-    hjitval = hjit(vals)
-
-    testfun = jax.jit(lambda theta : jax.jvp(h, (theta,), (theta,)))
-    testfun_val = testfun(vals)[1]
-
-    Jh = eval_J(vals)
-    vec_dJdn = eval_dJdtheta(vals)
-
-    ref_g = np.cos(Jh)*vec_dJdn
-    ref_h = np.dot(ref_g, vals)
-
-    assert np.allclose(dgdthetaval, ref_g)
-    assert np.allclose(testfun_val, ref_h)
-    assert np.allclose(hjitval, np.sin(Jh))
-    assert np.allclose(gjitval, np.sin(Jh))
+    Jh = eval_J(theta_values)
+    vec_dJdn = eval_dJdtheta(theta_values)
     
     F_ex = F(N, phih)
     F_compiled = compile_external_operator_form(F_ex)
