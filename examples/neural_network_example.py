@@ -157,6 +157,38 @@ def u_NN_jax(gdim, derivatives):
     else:
         raise NotImplementedError(f"No function is defined for the {derivatives=}.")
 
+def jax_wrapper(J, dJdtheta):
+
+    @jax.custom_jvp
+    def J_jax_jvp(theta):
+        return jax.pure_callback(J, jax.ShapeDtypeStruct((), theta.dtype), theta)
+
+    @J_jax_jvp.defjvp
+    def my_func_jvp(primals, tangents):
+        theta, = primals
+        dtheta, = tangents
+        Jval = J_jax_jvp(theta)
+        grad_theta = jax.pure_callback(dJdtheta, jax.ShapeDtypeStruct(theta.shape, theta.dtype), theta)
+        return Jval, jnp.dot(grad_theta, dtheta) # forward JVP
+
+    @jax.custom_vjp
+    def J_jax_vjp(theta):
+        return jax.pure_callback(J, jax.ShapeDtypeStruct((), theta.dtype), theta)
+
+    def J_jax_vjp_fwd(theta):
+        Jval = J_jax_vjp(theta)
+        residual = theta
+        return Jval, residual  # Residual for backward
+
+    def dJdtheta_jax_bwd(residual, cotangent):
+        theta = residual
+        grad_theta = jax.pure_callback(dJdtheta, jax.ShapeDtypeStruct(theta.shape, theta.dtype), theta)
+        return (cotangent*grad_theta,)  # J^T @ cotangent
+
+    J_jax_vjp.defvjp(J_jax_vjp_fwd, dJdtheta_jax_bwd)
+
+    return J_jax_jvp,J_jax_vjp
+
 ############################ pytest routine #####################################
 
 def test_neural_network(cell_type, q_deg, N):
@@ -228,11 +260,56 @@ def test_neural_network(cell_type, q_deg, N):
     lmbda.interpolate(lambda x: np.cos(3 * np.pi * x[0]))
 
     J_ex_op = compute_J(N, phih)
+    dJdn_ex = compute_dJdn(J_ex_op, theta)
     J_compiled = compile_external_operator_form(J_ex_op)
-    pack_external_operator_data(J_compiled)
-    Jh_loc = dolfinx.fem.assemble_scalar(J_compiled)
-    Jh = mesh.comm.allreduce(Jh_loc, op=MPI.SUM)
+    dJdn_compiled = compile_external_operator_form(dJdn_ex)
 
+    def eval_J(theta_values: np.ndarray) -> float:
+        theta.x.array[:] = theta_values
+        theta.x.scatter_forward()
+        pack_external_operator_data(J_compiled)
+        Jh_loc = dolfinx.fem.assemble_scalar(J_compiled)
+        Jh = mesh.comm.allreduce(Jh_loc, op=MPI.SUM)
+        return Jh
+
+    def eval_dJdtheta(theta_values: np.ndarray) -> np.ndarray:
+        theta.x.array[:] = theta_values
+        theta.x.scatter_forward()
+        pack_external_operator_data(dJdn_compiled)
+        vec_dJdn = dolfinx.fem.assemble_vector(dJdn_compiled)
+        return vec_dJdn.array.copy()
+
+    J_jax_jvp,J_jax_vjp = jax_wrapper(eval_J, eval_dJdtheta)
+
+    g = lambda theta : jnp.sin(J_jax_vjp(theta))
+    gval = g(vals)
+
+    gjit = jax.jit(g)
+    gjitval = gjit(vals)
+
+    dgdtheta = jax.jit(jax.grad(g))
+    dgdthetaval = dgdtheta(vals)
+
+    h = lambda theta : jnp.sin(J_jax_jvp(theta))
+    hval = h(vals)
+
+    hjit = jax.jit(h)
+    hjitval = hjit(vals)
+
+    testfun = jax.jit(lambda theta : jax.jvp(h, (theta,), (theta,)))
+    testfun_val = testfun(vals)[1]
+
+    Jh = eval_J(vals)
+    vec_dJdn = eval_dJdtheta(vals)
+
+    ref_g = np.cos(Jh)*vec_dJdn
+    ref_h = np.dot(ref_g, vals)
+
+    assert np.allclose(dgdthetaval, ref_g)
+    assert np.allclose(testfun_val, ref_h)
+    assert np.allclose(hjitval, np.sin(Jh))
+    assert np.allclose(gjitval, np.sin(Jh))
+    
     F_ex = F(N, phih)
     F_compiled = compile_external_operator_form(F_ex)
     pack_external_operator_data(F_compiled)
@@ -241,12 +318,7 @@ def test_neural_network(cell_type, q_deg, N):
     dFdn_ex = compute_dFdn(F_ex, theta, lmbda)
     dFdn_compiled = compile_external_operator_form(dFdn_ex)
     pack_external_operator_data(dFdn_compiled)
-    vec_dFdn = dolfinx.fem.assemble_vector(dFdn_compiled)
-
-    dJdn_ex = compute_dJdn(J_ex_op, theta)
-    dJdn_compiled = compile_external_operator_form(dJdn_ex)
-    pack_external_operator_data(dJdn_compiled)
-    vec_dJdn = dolfinx.fem.assemble_vector(dJdn_compiled)
+    vec_dFdn = dolfinx.fem.assemble_vector(dFdn_compiled).array.copy()
 
     return Jh,vec,vec_dFdn,vec_dJdn
 
