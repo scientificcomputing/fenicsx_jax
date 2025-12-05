@@ -2,10 +2,13 @@ from mpi4py import MPI
 
 import basix.ufl
 import dolfinx
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import ufl
 from dolfinx_external_operator import FEMExternalOperator, functionspace
+from jax.flatten_util import ravel_pytree
 
 from fenicsx_jax.fem import (
     compile_external_operator_form,
@@ -13,14 +16,12 @@ from fenicsx_jax.fem import (
     pack_external_operator_data,
 )
 
-import jax
-import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
 jax.config.update("jax_enable_x64", True)
 
+
 import equinox as eqx
-from functools import partial
-from mms import apply_mms,get_BC_function
+
+from mms import apply_mms, get_BC_function
 
 key = jax.random.PRNGKey(42)
 
@@ -32,21 +33,21 @@ D = 3
 NMC = 1000
 
 if gdim == 1:
-    uex_str = 'sin(10*pi*x[0])*x[0]'
-    uex_str = 'sin(2*pi*x[0])'
-    xtest = np.linspace(0, 1, 10000).reshape((1,-1))
+    uex_str = "sin(10*pi*x[0])*x[0]"
+    uex_str = "sin(2*pi*x[0])"
+    xtest = np.linspace(0, 1, 10000).reshape((1, -1))
 elif gdim == 2:
     xx = np.linspace(0, 1, 100)
-    X,Y = np.meshgrid(xx,xx)
+    X, Y = np.meshgrid(xx, xx)
     xtest = np.vstack([X.flatten(), Y.flatten()])
 
-    uex_str = 'sin(10*pi*x[0])*x[0]*x[1]*sin(4*pi*x[1]) + exp(-4*((x[0]-0.5)**2 + (x[1]-0.5)**2))*16*x[0]*(1-x[0])*x[1]*(1-x[1])'
+    uex_str = "sin(10*pi*x[0])*x[0]*x[1]*sin(4*pi*x[1]) + exp(-4*((x[0]-0.5)**2 + (x[1]-0.5)**2))*16*x[0]*(1-x[0])*x[1]*(1-x[1])"
 else:
     raise NotImplementedError
 
 problem_data = apply_mms(uex_str)
-u_ex = eval(problem_data['u_ex'])
-f    = eval(problem_data['f'])
+u_ex = eval(problem_data["u_ex"])
+f = eval(problem_data["f"])
 
 bc_func = get_BC_function(gdim)
 
@@ -54,29 +55,43 @@ xtrain = jnp.array(np.random.randn(gdim, NMC))
 
 ############################ MODEL AND LOSS FUNCTION ####################################
 
+
 class NeuralNetwork(eqx.Module):
     layers: list
 
     def __init__(self, key, N, D):
-        if D < 2: raise NotImplementedError
-        nn_dimensions = [[gdim, N]] + [[N, N] for i in range(D-2)] + [[N,1]]
+        if D < 2:
+            raise NotImplementedError
+        nn_dimensions = [[gdim, N]] + [[N, N] for i in range(D - 2)] + [[N, 1]]
         n_layers = len(nn_dimensions)
         keys = jax.random.split(key, n_layers)
-        self.layers = [eqx.nn.Linear(nn_dimensions[i][0], nn_dimensions[i][1], key=keys[i]) for i in range(n_layers-1)]
-        self.layers.append(eqx.nn.Linear(nn_dimensions[-1][0], "scalar", use_bias=False, key=keys[-1]))
+        self.layers = [
+            eqx.nn.Linear(nn_dimensions[i][0], nn_dimensions[i][1], key=keys[i])
+            for i in range(n_layers - 1)
+        ]
+        self.layers.append(
+            eqx.nn.Linear(nn_dimensions[-1][0], "scalar", use_bias=False, key=keys[-1])
+        )
         self.init_linear_weight(jax.nn.initializers.glorot_uniform, key)
 
     def init_linear_weight(self, init_fn, key):
-        get_weights = lambda m: [x.weight for x in jax.tree_util.tree_leaves(m) if isinstance(x, eqx.nn.Linear)]
+        get_weights = lambda m: [
+            x.weight
+            for x in jax.tree_util.tree_leaves(m)
+            if isinstance(x, eqx.nn.Linear)
+        ]
         weights = get_weights(self)
-        new_weights = [init_fn(subkey, weight.shape) for weight, subkey in zip(weights, jax.random.split(key, len(weights)))]
+        new_weights = [
+            init_fn(subkey, weight.shape)
+            for weight, subkey in zip(weights, jax.random.split(key, len(weights)))
+        ]
         self = eqx.tree_at(get_weights, self, new_weights)
 
     def __call__(self, x):
         phi = bc_func(x)
         for layer in self.layers[:-1]:
             x = jax.nn.sigmoid(layer(x))
-        return (self.layers[-1](x)*phi).squeeze()
+        return (self.layers[-1](x) * phi).squeeze()
 
     def u(self, x):
         return jax.vmap(self, in_axes=1, out_axes=0)(x).squeeze()
@@ -91,10 +106,15 @@ class NeuralNetwork(eqx.Module):
         return self(jnp.array([*x]))
 
     def laplacian_scalar(self, x):
-        return sum(jax.jacfwd(jax.jacfwd(self.split_eval,i),i)(*x) for i in range(gdim))
+        return sum(
+            jax.jacfwd(jax.jacfwd(self.split_eval, i), i)(*x) for i in range(gdim)
+        )
 
     def laplacian(self, x):
-        return sum(jax.vmap(jax.jacfwd(jax.jacfwd(self.split_eval,i),i))(*x) for i in range(gdim))
+        return sum(
+            jax.vmap(jax.jacfwd(jax.jacfwd(self.split_eval, i), i))(*x)
+            for i in range(gdim)
+        )
 
     @eqx.filter_jit
     def residual(self, x):
@@ -118,34 +138,40 @@ class NeuralNetwork(eqx.Module):
     # NOTE: the output is now a 2D array of shape (n_x_coordinates, len(theta))
     @eqx.filter_jit
     def residual_dtheta(self, x):
-        flattened_gradient_dtheta = lambda x : ravel_pytree(self.residual_dtheta_scalar(x))[0]
+        flattened_gradient_dtheta = lambda x: ravel_pytree(
+            self.residual_dtheta_scalar(x)
+        )[0]
         return jax.vmap(flattened_gradient_dtheta, in_axes=1)(x)
+
 
 model = NeuralNetwork(key, N, D)
 
 # theta_values is a 1D jax.numpy.array containing all NN weights and biases
 # Can reconstruct the NN from the theta_values by using unravel_fun
-theta_values,unravel_fun = ravel_pytree(model)
+theta_values, unravel_fun = ravel_pytree(model)
 original_model = unravel_fun(theta_values)
 
 dNN_dtheta_pytree = model.residual_dtheta_pytree(xtrain)
 dNN_dtheta = model.residual_dtheta(xtrain)
 
 # example of recovering pytree from d_NN/d_theta at x_0
-i = 0 # first coordinate of xtrain
-dNN_dtheta_xi = unravel_fun(dNN_dtheta[i]) # pytree with same structure as model
+i = 0  # first coordinate of xtrain
+dNN_dtheta_xi = unravel_fun(dNN_dtheta[i])  # pytree with same structure as model
 
 ############################ define external operator ###########################
 
+
 def evaluate_NN(x, theta):
     x = x.reshape((gdim, -1))
-    tt = theta[0,0,:].flatten()
+    tt = theta[0, 0, :].flatten()
     return np.array(unravel_fun(tt).residual(x).flatten())
+
 
 def evaluate_dNN_dtheta(x, theta):
     x = x.reshape((gdim, -1))
-    tt = theta[0,0,:].flatten()
+    tt = theta[0, 0, :].flatten()
     return np.array(unravel_fun(tt).residual_dtheta(x).flatten())
+
 
 def u_NN_jax(gdim, derivatives):
     if derivatives == (0, 0):
@@ -157,7 +183,9 @@ def u_NN_jax(gdim, derivatives):
     else:
         raise NotImplementedError(f"No function is defined for the {derivatives=}.")
 
+
 ############################ Prepare JAX wrapper for the FEniCSx functional ###########################
+
 
 # NOTE: JAX does not support providing custom forward and backward diff rules at the same time so
 #       need to write two wrappers. The one that is compatible with jax.grad is J_jax_vjp.
@@ -165,18 +193,19 @@ def u_NN_jax(gdim, derivatives):
 #       which assumes that the functions are pure, i.e., that they have no side-effects. This is of course
 #       an assumption that does not hold here. The alternative is to do derivatives by hand.
 def jax_wrapper(J, dJdtheta):
-
     @jax.custom_jvp
     def J_jax_jvp(theta):
         return jax.pure_callback(J, jax.ShapeDtypeStruct((), theta.dtype), theta)
 
     @J_jax_jvp.defjvp
     def my_func_jvp(primals, tangents):
-        theta, = primals
-        dtheta, = tangents
+        (theta,) = primals
+        (dtheta,) = tangents
         Jval = J_jax_jvp(theta)
-        grad_theta = jax.pure_callback(dJdtheta, jax.ShapeDtypeStruct(theta.shape, theta.dtype), theta)
-        return Jval, jnp.dot(grad_theta, dtheta) # forward JVP
+        grad_theta = jax.pure_callback(
+            dJdtheta, jax.ShapeDtypeStruct(theta.shape, theta.dtype), theta
+        )
+        return Jval, jnp.dot(grad_theta, dtheta)  # forward JVP
 
     @jax.custom_vjp
     def J_jax_vjp(theta):
@@ -189,24 +218,27 @@ def jax_wrapper(J, dJdtheta):
 
     def dJdtheta_jax_bwd(residual, cotangent):
         theta = residual
-        grad_theta = jax.pure_callback(dJdtheta, jax.ShapeDtypeStruct(theta.shape, theta.dtype), theta)
-        return (cotangent*grad_theta,)  # J^T @ cotangent
+        grad_theta = jax.pure_callback(
+            dJdtheta, jax.ShapeDtypeStruct(theta.shape, theta.dtype), theta
+        )
+        return (cotangent * grad_theta,)  # J^T @ cotangent
 
     J_jax_vjp.defvjp(J_jax_vjp_fwd, dJdtheta_jax_bwd)
 
-    return J_jax_jvp,J_jax_vjp
+    return J_jax_jvp, J_jax_vjp
+
 
 ############################ pytest routine #####################################
 
-def test_jax_wrapper(theta_values, eval_J, eval_dJdtheta):
 
+def test_jax_wrapper(theta_values, eval_J, eval_dJdtheta):
     Jh = eval_J(theta_values)
     vec_dJdn = eval_dJdtheta(theta_values)
 
-    J_jax_jvp,J_jax_vjp = jax_wrapper(eval_J, eval_dJdtheta)
+    J_jax_jvp, J_jax_vjp = jax_wrapper(eval_J, eval_dJdtheta)
 
     # BWD diff test
-    g = lambda theta_values : jnp.sin(J_jax_vjp(theta_values))
+    g = lambda theta_values: jnp.sin(J_jax_vjp(theta_values))
     gval = g(theta_values)
 
     gjit = jax.jit(g)
@@ -215,25 +247,26 @@ def test_jax_wrapper(theta_values, eval_J, eval_dJdtheta):
     dgdtheta = jax.jit(jax.grad(g))
     dgdthetaval = dgdtheta(theta_values)
 
-    ref_g = np.cos(Jh)*vec_dJdn
+    ref_g = np.cos(Jh) * vec_dJdn
 
     assert np.allclose(dgdthetaval, ref_g)
     assert np.allclose(gjitval, np.sin(Jh))
 
     # FWD diff test
-    h = lambda theta_values : jnp.sin(J_jax_jvp(theta_values))
+    h = lambda theta_values: jnp.sin(J_jax_jvp(theta_values))
     hval = h(theta_values)
 
     hjit = jax.jit(h)
     hjitval = hjit(theta_values)
 
-    hjvp = jax.jit(lambda theta_values : jax.jvp(h, (theta_values,), (theta_values,))[1])
+    hjvp = jax.jit(lambda theta_values: jax.jvp(h, (theta_values,), (theta_values,))[1])
     hjvp_val = hjvp(theta_values)
 
     ref_h = np.dot(ref_g, theta_values)
 
     assert np.allclose(hjvp_val, ref_h)
     assert np.allclose(hjitval, np.sin(Jh))
+
 
 def test_neural_network(cell_type, q_deg, N):
     tdim = dolfinx.cpp.mesh.cell_dim(cell_type)
@@ -266,9 +299,7 @@ def test_neural_network(cell_type, q_deg, N):
         x,
         theta,
         function_space=Q,
-        external_function=lambda derivatives: u_NN_jax(
-            mesh.geometry.dim, derivatives
-        ),
+        external_function=lambda derivatives: u_NN_jax(mesh.geometry.dim, derivatives),
         name="exop",
     )
 
@@ -329,7 +360,7 @@ def test_neural_network(cell_type, q_deg, N):
 
     Jh = eval_J(theta_values)
     vec_dJdn = eval_dJdtheta(theta_values)
-    
+
     F_ex = F(N, phih)
     F_compiled = compile_external_operator_form(F_ex)
     pack_external_operator_data(F_compiled)
@@ -340,7 +371,8 @@ def test_neural_network(cell_type, q_deg, N):
     pack_external_operator_data(dFdn_compiled)
     vec_dFdn = dolfinx.fem.assemble_vector(dFdn_compiled).array.copy()
 
-    return Jh,vec,vec_dFdn,vec_dJdn
+    return Jh, vec, vec_dFdn, vec_dJdn
+
 
 if __name__ == "__main__":
     cell_type = dolfinx.mesh.CellType.triangle

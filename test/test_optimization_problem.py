@@ -8,10 +8,10 @@ import ufl
 from dolfinx_external_operator import FEMExternalOperator, functionspace
 
 from fenicsx_jax.fem import (
+    LinearProblem,
     compile_external_operator_form,
     create_real_functionspace,
     pack_external_operator_data,
-    LinearProblem
 )
 
 try:
@@ -22,7 +22,7 @@ try:
     def _u_NN(gdim, x, theta):
         val = theta[0]
         for i in range(gdim):
-            val *= jax.numpy.sin(theta[i+1] * x[i])
+            val *= jax.numpy.sin(theta[i + 1] * x[i])
         return val
 
     u_NN_vectorized = jax.vmap(_u_NN, in_axes=(None, 0, 0))
@@ -30,7 +30,7 @@ try:
     @jax.jit(static_argnums=0)
     def u_NN_jit(gdim, x, theta):
         x_vec = x.reshape(-1, gdim)
-        theta_vec = theta.reshape(-1, gdim+1)
+        theta_vec = theta.reshape(-1, gdim + 1)
         out = u_NN_vectorized(gdim, x_vec, theta_vec)
         return out.flatten().copy()
 
@@ -40,7 +40,7 @@ try:
     @jax.jit(static_argnums=0)
     def du_NN_dtheta_jit(gdim, x, theta):
         x_vec = x.reshape(-1, gdim)
-        theta_vec = theta.reshape(-1, gdim+1)
+        theta_vec = theta.reshape(-1, gdim + 1)
         out = d_u_NN_dtheta_vectorized(gdim, x_vec, theta_vec)
         return out.reshape(-1).copy()
 
@@ -59,29 +59,30 @@ except ImportError:
 
 
 def u_NN(gdim, mod, x, theta):
-    val = theta[0]
+    val = 0
+    val += theta[0]
     for i in range(gdim):
-        val *= mod.sin(theta[i+1] * x[i])
+        val *= mod.sin(theta[i + 1] * x[i])
     return val
 
 
 def u_NN_impl(gdim, x, theta):
     x_vec = x.reshape(-1, gdim)
-    theta_vec = theta.reshape(-1, gdim+1)
+    theta_vec = theta.reshape(-1, gdim + 1)
     out = u_NN(gdim, np, x_vec.T, theta_vec.T)
     return out.flatten().copy()
 
 
 def du_NN_dtheta_impl(gdim, x, theta):
     x_vec = x.reshape(-1, gdim).T
-    theta_vec = theta.reshape(-1, gdim+1).T
+    theta_vec = theta.reshape(-1, gdim + 1).T
     out = np.zeros((gdim + 1, x_vec.shape[1]))
-    out[0] = u_NN(gdim, np,  x_vec, theta_vec.copy()) / theta_vec[0]
-    for i in range(1, gdim+1):
+    out[0] = u_NN(gdim, np, x_vec, theta_vec.copy()) / theta_vec[0]
+    for i in range(1, gdim + 1):
         out[i] = theta_vec[0]
         for j in range(gdim):
             if i == j + 1:
-                out[i] *= x_vec[j] * np.cos(theta_vec[j+1] * x_vec[j])
+                out[i] *= x_vec[j] * np.cos(theta_vec[j + 1] * x_vec[j])
             else:
                 out[i] *= np.sin(theta_vec[j + 1] * x_vec[j])
     return out.T.reshape(-1).copy()
@@ -129,9 +130,9 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
         )
 
     gdim = mesh.geometry.dim
-    R = create_real_functionspace(mesh, value_shape=(gdim+1,))
+    R = create_real_functionspace(mesh, value_shape=(gdim + 1,))
     theta = dolfinx.fem.Function(R)
-    theta.x.array[:] = np.arange(gdim+1) + 0.2
+    theta.x.array[:] = np.arange(gdim + 1) + 0.2
     theta.x.scatter_forward()
     x = ufl.SpatialCoordinate(mesh)
 
@@ -162,7 +163,6 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
             name="exop",
         )
 
-
     V = functionspace(mesh, ("Lagrange", 1))
     phi = ufl.TrialFunction(V)
     v = ufl.TestFunction(V)
@@ -171,7 +171,9 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
     u_bc = dolfinx.fem.Function(V)
     mesh.topology.create_connectivity(mesh.topology.dim - 1, mesh.topology.dim)
     boundary_facets = dolfinx.mesh.exterior_facet_indices(mesh.topology)
-    bc_dofs = dolfinx.fem.locate_dofs_topological(V, mesh.topology.dim-1, boundary_facets)
+    bc_dofs = dolfinx.fem.locate_dofs_topological(
+        V, mesh.topology.dim - 1, boundary_facets
+    )
     bc = dolfinx.fem.dirichletbc(u_bc, bc_dofs)
     bcs = [bc]
 
@@ -201,20 +203,37 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
     F = ufl.action(a - L, phih)
     J = compute_J(N, phih)
 
-    forward_problem = LinearProblem(a, L, u=phih,bcs=bcs, petsc_options={"ksp_type": "preonly",
-                                                                       "pc_type": "lu", "pc_factor_mat_solver_type": "mumps",
-                                                                       "ksp_error_if_not_converged": True},
-                                                                       petsc_options_prefix="forward_")
-    
+    forward_problem = LinearProblem(
+        a,
+        L,
+        u=phih,
+        bcs=bcs,
+        petsc_options={
+            "ksp_type": "preonly",
+            "pc_type": "lu",
+            "pc_factor_mat_solver_type": "mumps",
+            "ksp_error_if_not_converged": True,
+        },
+        petsc_options_prefix="forward_",
+    )
+
     dFdphi = ufl.derivative(F, phih)
     dJdphi = -ufl.derivative(J, phih)
-    adjoint_problem = LinearProblem(dFdphi, dJdphi, u=lmbda,bcs=bcs, petsc_options={"ksp_type": "preonly",
-                                                                       "pc_type": "lu", "pc_factor_mat_solver_type": "mumps",
-                                                                       "ksp_error_if_not_converged": True},
-                                                                       petsc_options_prefix="adjoint_")
-    
-    J_compiled = compile_external_operator_form(J)
+    adjoint_problem = LinearProblem(
+        dFdphi,
+        dJdphi,
+        u=lmbda,
+        bcs=bcs,
+        petsc_options={
+            "ksp_type": "preonly",
+            "pc_type": "lu",
+            "pc_factor_mat_solver_type": "mumps",
+            "ksp_error_if_not_converged": True,
+        },
+        petsc_options_prefix="adjoint_",
+    )
 
+    J_compiled = compile_external_operator_form(J)
 
     dFdtheta = compute_dFdn(F, theta, lmbda)
     dJdtheta = compute_dJdn(J, theta)
@@ -229,11 +248,10 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
         local_contribution = dolfinx.fem.assemble_scalar(J_compiled)
         return mesh.comm.allreduce(local_contribution, op=MPI.SUM)
 
-
     def eval_dJdtheta(theta_values: np.ndarray) -> np.ndarray:
         theta.x.array[:] = theta_values
         theta.x.scatter_forward()
-    
+
         forward_problem.solve()
         adjoint_problem.solve()
         pack_external_operator_data(compiled_dFdtheta)
@@ -243,10 +261,8 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
         vec.scatter_reverse(dolfinx.la.InsertMode.add)
         return vec.array.copy()
 
-
     init_J = eval_J(theta.x.array)
     init_dJdtheta = eval_dJdtheta(theta.x.array)
-
 
     # Create reference problem with "pure" UFL expressions
     phi_ref = dolfinx.fem.Function(V, name="phih_ref")
@@ -258,32 +274,50 @@ def test_adjoint_problem(cell_type, N, q_deg, use_jax):
     dJdphi_ref = -ufl.derivative(J_ref, phi_ref)
     dFdtheta_ref = compute_dFdn(F_ref, theta, lmbda)
     dJdtheta_ref = compute_dJdn(J_ref, theta)
-    forward_problem_ref = LinearProblem(a, L_ref, u=phi_ref,bcs=bcs, petsc_options={"ksp_type": "preonly",
-                                                                       "pc_type": "lu", "pc_factor_mat_solver_type": "mumps",
-                                                                       "ksp_error_if_not_converged": True},
-                                                                       petsc_options_prefix="forward_ref_")
-    adjoint_problem_ref = LinearProblem(dFdphi_ref, dJdphi_ref, u=lmbda,bcs=bcs, petsc_options={"ksp_type": "preonly",
-                                                                       "pc_type": "lu", "pc_factor_mat_solver_type": "mumps",
-                                                                       "ksp_error_if_not_converged": True},
-                                                                       petsc_options_prefix="adjoint_ref_")
+    forward_problem_ref = LinearProblem(
+        a,
+        L_ref,
+        u=phi_ref,
+        bcs=bcs,
+        petsc_options={
+            "ksp_type": "preonly",
+            "pc_type": "lu",
+            "pc_factor_mat_solver_type": "mumps",
+            "ksp_error_if_not_converged": True,
+        },
+        petsc_options_prefix="forward_ref_",
+    )
+    adjoint_problem_ref = LinearProblem(
+        dFdphi_ref,
+        dJdphi_ref,
+        u=lmbda,
+        bcs=bcs,
+        petsc_options={
+            "ksp_type": "preonly",
+            "pc_type": "lu",
+            "pc_factor_mat_solver_type": "mumps",
+            "ksp_error_if_not_converged": True,
+        },
+        petsc_options_prefix="adjoint_ref_",
+    )
+
     def eval_J_ref(theta_values: np.ndarray) -> float:
         theta.x.array[:] = theta_values
         theta.x.scatter_forward()
         forward_problem_ref.solve()
         local_contribution = dolfinx.fem.assemble_scalar(dolfinx.fem.form(J_ref))
         return mesh.comm.allreduce(local_contribution, op=MPI.SUM)
-    
+
     def eval_dJdtheta_ref(theta_values: np.ndarray) -> np.ndarray:
         theta.x.array[:] = theta_values
         theta.x.scatter_forward()
-    
+
         forward_problem_ref.solve()
         adjoint_problem_ref.solve()
         vec = dolfinx.fem.assemble_vector(dolfinx.fem.form(dJdtheta_ref))
         dolfinx.fem.assemble_vector(vec.array, dolfinx.fem.form(dFdtheta_ref))
         vec.scatter_reverse(dolfinx.la.InsertMode.add)
         return vec.array.copy()
-
 
     init_ref_J = eval_J_ref(theta.x.array)
     init_ref_dJdtheta = eval_dJdtheta_ref(theta.x.array)
