@@ -32,11 +32,18 @@ def string_to_sympy(string: str) -> sy.Expr:
 
 def get_BC_function(gdim):
     if gdim == 1:
-        out = lambda x: 4 * x[0] * (1 - x[0])
+
+        def out(x):
+            return 4 * x[0] * (1 - x[0])
     elif gdim == 2:
-        out = lambda x: 16 * x[0] * (1 - x[0]) * x[1] * (1 - x[1])
+
+        def out(x):
+            return 16 * x[0] * (1 - x[0]) * x[1] * (1 - x[1])
     else:
-        out = lambda x: 64 * x[0] * (1 - x[0]) * x[1] * (1 - x[1]) * x[2] * (1 - x[2])
+
+        def out(x):
+            return 64 * x[0] * (1 - x[0]) * x[1] * (1 - x[1]) * x[2] * (1 - x[2])
+
     return out
 
 
@@ -65,7 +72,10 @@ def apply_mms(uex_str: str, verbose: bool = False):
 
 if __name__ == "__main__":
     uex1D = "sin(10*pi*x[0])*x[0]"
-    uex2D = "sin(10*pi*x[0])*x[0]*x[1]*sin(4*pi*x[1]) + exp(-4*((x[0]-0.5)**2 + (x[1]-0.5)**2))*16*x[0]*(1-x[0])*x[1]*(1-x[1])"
+    uex2D = (
+        "sin(10*pi*x[0])*x[0]*x[1]*sin(4*pi*x[1]) + exp(-4*((x[0]-0.5)**2 +"
+        + "(x[1]-0.5)**2))*16*x[0]*(1-x[0])*x[1]*(1-x[1])"
+    )
 
     apply_mms(uex1D, verbose=True)
     apply_mms(uex2D, verbose=True)

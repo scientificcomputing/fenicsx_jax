@@ -70,9 +70,9 @@ def evaluate_operands(
 ) -> dict[ufl.core.expr.Expr | int, np.ndarray]:
     """Evaluates operands of external operators.
 
-    This function is based on evaluate_operands from DOLFINx external operator, under the
-    LGPL-3.0-or-later license.
-    Original author: Andrey Latyshev
+    This function is based on evaluate_operands from DOLFINx external operator,
+    under the LGPL-3.0-or-later license. Original author: Andrey Latyshev.
+    This version is modified to avoid extra memory allocation for real spaces.
 
     Args:
         external_operators: A list with external operators required to be updated.

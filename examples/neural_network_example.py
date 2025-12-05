@@ -2,6 +2,7 @@ from mpi4py import MPI
 
 import basix.ufl
 import dolfinx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,13 +16,10 @@ from fenicsx_jax.fem import (
     create_real_functionspace,
     pack_external_operator_data,
 )
+from mms import apply_mms, get_BC_function
 
 jax.config.update("jax_enable_x64", True)
 
-
-import equinox as eqx
-
-from mms import apply_mms, get_BC_function
 
 key = jax.random.PRNGKey(42)
 
@@ -41,7 +39,10 @@ elif gdim == 2:
     X, Y = np.meshgrid(xx, xx)
     xtest = np.vstack([X.flatten(), Y.flatten()])
 
-    uex_str = "sin(10*pi*x[0])*x[0]*x[1]*sin(4*pi*x[1]) + exp(-4*((x[0]-0.5)**2 + (x[1]-0.5)**2))*16*x[0]*(1-x[0])*x[1]*(1-x[1])"
+    uex_str = (
+        "sin(10*pi*x[0])*x[0]*x[1]*sin(4*pi*x[1]) +"
+        + " exp(-4*((x[0]-0.5)**2 + (x[1]-0.5)**2))*16*x[0]*(1-x[0])*x[1]*(1-x[1])"
+    )
 else:
     raise NotImplementedError
 
@@ -53,7 +54,7 @@ bc_func = get_BC_function(gdim)
 
 xtrain = jnp.array(np.random.randn(gdim, NMC))
 
-############################ MODEL AND LOSS FUNCTION ####################################
+# ## MODEL AND LOSS FUNCTION
 
 
 class NeuralNetwork(eqx.Module):
@@ -75,11 +76,13 @@ class NeuralNetwork(eqx.Module):
         self.init_linear_weight(jax.nn.initializers.glorot_uniform, key)
 
     def init_linear_weight(self, init_fn, key):
-        get_weights = lambda m: [
-            x.weight
-            for x in jax.tree_util.tree_leaves(m)
-            if isinstance(x, eqx.nn.Linear)
-        ]
+        def get_weights(m):
+            return [
+                x.weight
+                for x in jax.tree_util.tree_leaves(m)
+                if isinstance(x, eqx.nn.Linear)
+            ]
+
         weights = get_weights(self)
         new_weights = [
             init_fn(subkey, weight.shape)
@@ -138,9 +141,9 @@ class NeuralNetwork(eqx.Module):
     # NOTE: the output is now a 2D array of shape (n_x_coordinates, len(theta))
     @eqx.filter_jit
     def residual_dtheta(self, x):
-        flattened_gradient_dtheta = lambda x: ravel_pytree(
-            self.residual_dtheta_scalar(x)
-        )[0]
+        def flattened_gradient_dtheta(x):
+            return ravel_pytree(self.residual_dtheta_scalar(x))[0]
+
         return jax.vmap(flattened_gradient_dtheta, in_axes=1)(x)
 
 
@@ -184,14 +187,16 @@ def u_NN_jax(gdim, derivatives):
         raise NotImplementedError(f"No function is defined for the {derivatives=}.")
 
 
-############################ Prepare JAX wrapper for the FEniCSx functional ###########################
+# ## Prepare JAX wrapper for the FEniCSx functional
 
 
-# NOTE: JAX does not support providing custom forward and backward diff rules at the same time so
-#       need to write two wrappers. The one that is compatible with jax.grad is J_jax_vjp.
-# NOTE: The only way to wrap functions into JAX so that autodiff is supported is to use jax.pure_callback
-#       which assumes that the functions are pure, i.e., that they have no side-effects. This is of course
-#       an assumption that does not hold here. The alternative is to do derivatives by hand.
+# NOTE: JAX does not support providing custom forward and
+#     backward diff rules at the same time so need to write two wrappers.
+#     The one that is compatible with jax.grad is J_jax_vjp.
+# NOTE: The only way to wrap functions into JAX so that autodiff is supported
+#       is to use jax.pure_callback which assumes that the functions are pure,
+#       i.e., that they have no side-effects. This is of course an assumption that
+#       does not hold here. The alternative is to do derivatives by hand.
 def jax_wrapper(J, dJdtheta):
     @jax.custom_jvp
     def J_jax_jvp(theta):
@@ -238,8 +243,10 @@ def test_jax_wrapper(theta_values, eval_J, eval_dJdtheta):
     J_jax_jvp, J_jax_vjp = jax_wrapper(eval_J, eval_dJdtheta)
 
     # BWD diff test
-    g = lambda theta_values: jnp.sin(J_jax_vjp(theta_values))
-    gval = g(theta_values)
+    def g(theta_values):
+        return jnp.sin(J_jax_vjp(theta_values))
+
+    # gval = g(theta_values)
 
     gjit = jax.jit(g)
     gjitval = gjit(theta_values)
@@ -253,8 +260,10 @@ def test_jax_wrapper(theta_values, eval_J, eval_dJdtheta):
     assert np.allclose(gjitval, np.sin(Jh))
 
     # FWD diff test
-    h = lambda theta_values: jnp.sin(J_jax_jvp(theta_values))
-    hval = h(theta_values)
+    def h(theta_values):
+        return jnp.sin(J_jax_jvp(theta_values))
+
+    # hval = h(theta_values)
 
     hjit = jax.jit(h)
     hjitval = hjit(theta_values)
