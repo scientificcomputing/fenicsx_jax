@@ -91,9 +91,7 @@ def evaluate_operands(
     ref_function_space = external_operators[0].ref_function_space
     ufl_element = ref_function_space.ufl_element()
     mesh = ref_function_space.mesh
-    quadrature_points = basix.make_quadrature(
-        ufl_element.cell_type, ufl_element.degree
-    )[0]
+    q_pts = basix.make_quadrature(ufl_element.cell_type, ufl_element.degree)[0]
 
     # If no entity map is provided, assume that there is no sub-meshing
     if entities is None:
@@ -103,7 +101,7 @@ def evaluate_operands(
         entities = cells
 
     # Evaluate unique operands in external operators
-    evaluated_operands = {}
+    evaluated_operands: dict[ufl.core.expr.Expr | int, np.ndarray] = {}
     for external_operator in external_operators:
         # TODO: Is it possible to get the basix information out here?
         for operand in external_operator.ufl_operands:
@@ -118,7 +116,7 @@ def evaluate_operands(
                 # TODO: Stop recreating the expression every time
                 expr = dolfinx.fem.Expression(
                     operand,
-                    quadrature_points,
+                    q_pts,  # type: ignore
                     dtype=external_operator.ref_coefficient.dtype,
                 )
                 # NOTE: Using expression eval might be expensive
@@ -135,7 +133,7 @@ def evaluate_operands(
                         c_size = evaluated_operand_at_entity.shape[-1]
                         evaluated_operand = np.lib.stride_tricks.as_strided(
                             evaluated_operand_at_entity,
-                            shape=(len(entities), quadrature_points.shape[0], c_size),
+                            shape=(len(entities), q_pts.shape[0], c_size),  # type: ignore
                             strides=(0, 0, evaluated_operand_at_entity.itemsize),
                             writeable=False,
                         )
