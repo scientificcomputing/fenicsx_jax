@@ -51,7 +51,7 @@ def apply_mms(uex_str: str, verbose: bool = False):
     # Convert spatially dependent expression from string to sympy expression
 
     uex = string_to_sympy(uex_str)
-    x = sorted(list(uex.free_symbols), key=str) # free_symbols is an unordered set
+    x = sorted(list(uex.free_symbols), key=str)  # free_symbols is an unordered set
     gdim = len(x)
 
     def laplacian(u):

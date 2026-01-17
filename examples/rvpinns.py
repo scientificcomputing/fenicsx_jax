@@ -109,21 +109,28 @@ class NeuralNetwork(eqx.Module):
     @eqx.filter_jit
     def dudtheta(self, x):
         def scalar_dudtheta(x):
-            out = ravel_pytree(eqx.filter_grad(lambda network,x : network(x))(self, x))
+            out = ravel_pytree(eqx.filter_grad(lambda network, x: network(x))(self, x))
             return out[0]
+
         return jax.vmap(scalar_dudtheta, in_axes=1, out_axes=0)(x)
 
     @eqx.filter_jit
     def d2udxdtheta(self, x):
         def scalar_dudtheta(x):
-            return eqx.filter_jacrev(lambda network,x : jax.jacfwd(network)(x))(self, x)
+            return eqx.filter_jacrev(lambda network, x: jax.jacfwd(network)(x))(self, x)
+
         def ravel_and_stack(x):
             pytree_out = scalar_dudtheta(x)
-            values = jnp.stack([
-                ravel_pytree(jax.tree.map(lambda x : x[i], pytree_out))[0]
-                for i in range(gdim)])
+            values = jnp.stack(
+                [
+                    ravel_pytree(jax.tree.map(lambda x: x[i], pytree_out))[0]
+                    for i in range(gdim)
+                ]
+            )
             return values
+
         return jax.vmap(ravel_and_stack, in_axes=1, out_axes=1)(x)
+
 
 model = NeuralNetwork(key, N, D)
 
@@ -135,7 +142,7 @@ original_model = unravel_fun(theta_values)
 ############################ define external operator ###########################
 
 
-#FIXME: need to ask about output shape orderings
+# FIXME: need to ask about output shape orderings
 def u_NN_jax(x, theta, derivatives=None):
     x = x.reshape((gdim, -1))
     tt = theta[0, 0, :].flatten()
@@ -152,6 +159,7 @@ def u_NN_jax(x, theta, derivatives=None):
         return np.asarray(network.d2udxdtheta(x)).flatten()
     else:
         raise NotImplementedError(f"No function is defined for the {derivatives=}.")
+
 
 # ## Prepare JAX wrapper for the FEniCSx functional
 
@@ -272,7 +280,9 @@ def test_rvpinns(cell_type, q_deg, N):
         x,
         theta,
         function_space=Q,
-        external_function=lambda derivatives:partial(u_NN_jax, derivatives=derivatives),
+        external_function=lambda derivatives: partial(
+            u_NN_jax, derivatives=derivatives
+        ),
         name="exop",
     )
 
@@ -299,7 +309,7 @@ def test_rvpinns(cell_type, q_deg, N):
 
     # NOTE: dJdn = 0 here so things simplify a bit
     def compute_J(phih):
-        return ufl.inner(ufl.grad(phih), ufl.grad(phih)) * dx + phih * phih *dx
+        return ufl.inner(ufl.grad(phih), ufl.grad(phih)) * dx + phih * phih * dx
 
     def compute_dFdn(F, theta, lmbda):
         dFdtheta = ufl.derivative(F, theta)
@@ -368,6 +378,7 @@ def test_rvpinns(cell_type, q_deg, N):
     test_jax_wrapper(theta_values, eval_J, eval_dJdtheta)
 
     return Jh, vec_dJdn
+
 
 if __name__ == "__main__":
     cell_type = dolfinx.mesh.CellType.triangle
