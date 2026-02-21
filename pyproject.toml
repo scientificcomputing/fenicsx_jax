@@ -16,7 +16,7 @@ license = "LGPL-3.0-or-later"
 readme = "README.md"
 dependencies = [
     "fenics-dolfinx>=0.10.0,<0.11.0",
-    "dolfinx_external_operator@git+https://github.com/a-latyshev/dolfinx-external-operator",
+    "dolfinx_external_operator",
 ]
 
 
