@@ -25,7 +25,7 @@ test = ["pytest", "sympy", "jax", "scifem"]
 examples = ["equinox", "optax", "sympy"]
 dev = ["pdbpp", "ipython", "mypy", "ruff"]
 docs = ["jupyter-book", "jupytext", "sphinx-codeautolink"]
-jupyter = ["trame_jupyter_extension", "trame", "pyvista[all]>=0.45.0"]
+jupyter = ["trame_jupyter_extension", "trame", "pyvista[all]>=0.47.3"]
 all = [
     "fenicsx_jax[test]",
     "fenicsx_jax[dev]",
